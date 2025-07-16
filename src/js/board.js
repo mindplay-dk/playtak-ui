@@ -696,6 +696,99 @@ function constructBurredBox(width, height, depth, burringDepth, burringHeight, b
 	return geometry;
 }
 
+var animation = {
+	queue: [], // { objects, positions, type, duration }
+	playing: false,
+
+	push:function(objects, type = 'none', duration = 0){
+		this.queue.push({
+			objects: objects.slice(),
+			positions: objects.map(obj => obj.position.clone()),
+			type: type,
+			duration: duration
+		});
+	},
+
+	play:function(){
+		if (!this.playing && this.queue.length > 0){
+			this.playing = true;
+			this.nextFrame();
+		}
+	},
+
+	nextFrame:function(){
+		if (this.queue.length === 0) {
+			this.playing = false;
+		} else {
+			var frame = this.queue.shift();
+			this.playFrame(frame, performance.now());
+    }
+	},
+
+	playFrame:function(frame, startTime) {
+		var objects = frame.objects;
+		var from = objects.map(obj => obj.position.clone());
+		var to = frame.positions;
+		var type = frame.type;
+		var duration = frame.duration;
+		
+		if (type === 'none') {
+			for (let i = 0; i < objects.length; ++i) {
+				objects[i].position.copy(to[i]);
+			}
+			this.nextFrame();
+			return;
+		}
+
+		if (type === 'jump') {
+			var dx = to[0].x - from[0].x;
+			var dy = to[0].y - from[0].y;
+			var dz = to[0].z - from[0].z;
+			var distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+			duration = Math.max(frame.duration, frame.duration * distance * 0.003);
+		}
+
+		var animate = (now) => {
+			var t = (now - startTime) / duration;
+			if (t >= 1) t = 1;
+
+			for (let i = 0; i < objects.length; ++i) {
+				if (type === 'move') {
+					objects[i].position.lerpVectors(from[i], to[i], t);
+				}
+
+				if (type === 'jump') {
+					var obj = objects[i]
+
+					obj.position.x = from[i].x + (to[i].x - from[i].x) * t;
+					obj.position.z = from[i].z + (to[i].z - from[i].z) * t;
+
+					var dx = to[i].x - from[i].x;
+					var dz = to[i].z - from[i].z;
+					var distance = Math.sqrt(dx * dx + dz * dz);
+					
+					var jumpHeight = 40 + distance * 0.33;
+					var baseY = from[i].y + (to[i].y - from[i].y) * t;
+					obj.position.y = baseY + jumpHeight * 4 * t * (1 - t);
+				}
+			}
+
+			if (t < 1) {
+				requestAnimationFrame(animate);
+			} else {
+				// Ensure final position is exact
+				for (let i = 0; i < objects.length; ++i) {
+					objects[i].position.copy(to[i]);
+				}
+				this.nextFrame();
+			}
+		};
+
+		requestAnimationFrame(animate);
+	},
+}
+
 var board = {
 	size: 0,
 	komi: 0,
@@ -1170,9 +1263,14 @@ var board = {
 			if(this.selected){
 				if(destinationstack.length==0){
 					var sel=this.selected
-					this.unselect()
+					animation.push([sel])
+					this.unselect({animate:false})
 					var hlt=pick[1]
+					
 					this.pushPieceOntoSquare(hlt,sel)
+					animation.push([sel], 'jump', 300)
+					animation.play()
+
 					//check if actually moved
 					var stone = 'Piece'
 					if(sel.iscapstone){stone = 'Cap'}
@@ -1992,13 +2090,19 @@ var board = {
 		return isEven
 	}
 	,select:function(obj){
-		obj.position.y += stack_selection_height
-		this.selected = obj
+		animation.push([obj]);
+		obj.position.y += stack_selection_height;
+		this.selected = obj;
+		animation.push([obj], 'move', 100);
+		animation.play();
 	}
-	,unselect:function(){
+	,unselect:function({animate = true}){
 		if(this.selected){
-			this.selected.position.y -= stack_selection_height
-			this.selected = null
+			animate && animation.push([this.selected]);
+			this.selected.position.y -= stack_selection_height;
+			animate && animation.push([this.selected], 'move', 75);
+			this.selected = null;
+			animate && animation.play();
 		}
 	}
 	,selectStack:function(stk){
